@@ -1,109 +1,149 @@
-
 from flask import Blueprint, request
-
-from app.services.expense_service import (
-    get_all_expenses,
-    get_expense_by_id,
-    create_expense,
-    update_expense,
-    delete_expense
+from flask.views import MethodView
+from app.extensions import db
+from app.repositories.expense_repository import ExpenseRepository
+from app.services.expense_service import ExpenseService
+from app.schemas.expense_schema import (
+    ExpenseCreateSchema,
+    ExpenseUpdateSchema,
+    ExpenseResponseSchema,
+    ExpenseFilterSchema,
 )
-
-from app.utils.validators import validate_expense_data
-from app.utils.serializers import serialize_expense
-
+from app.utils.response_builder import ResponseBuilder
+from app.utils.request_parser import RequestParser
+from app.schemas.expense_schema import MonthlySummaryQuerySchema
 
 expense_bp = Blueprint("expenses", __name__)
 
+class ExpenseBaseAPI(MethodView):
 
-@expense_bp.route("/expenses", methods=["GET"])
-def get_expenses():
-    expenses = get_all_expenses()
+    def __init__(self):
+        repository = ExpenseRepository(db.session)
+        self.service = ExpenseService(repository)
 
-    return {
-        "success": True,
-        "count": len(expenses),
-        "data": [
-            serialize_expense(expense)
+    @staticmethod
+    def serialize(expense):
+        return ExpenseResponseSchema.model_validate(expense)
+
+class ExpenseListAPI(ExpenseBaseAPI):
+
+    def get(self):
+        filters = ExpenseFilterSchema.model_validate(
+            request.args.to_dict()
+        )
+
+        expenses, total = self.service.get_filtered_expenses(filters)
+
+        expense_data = [
+            self.serialize(expense)
             for expense in expenses
         ]
-    }, 200
+
+        total_pages = (
+            total + filters.limit - 1
+        ) // filters.limit
+
+        return ResponseBuilder.success(
+            message="Expenses retrieved successfully",
+            data={
+                "count": len(expense_data),
+                "total": total,
+                "page": filters.page,
+                "limit": filters.limit,
+                "total_pages": total_pages,
+                "expenses": expense_data,
+            },
+        )
+
+    def post(self):
+        payload = ExpenseCreateSchema.model_validate(
+            RequestParser.parse_json()
+        )
+
+        expense = self.service.create_expense(payload)
+
+        return ResponseBuilder.success(
+            message="Expense created successfully",
+            data=self.serialize(expense),
+            status_code=201,
+        )
+
+class ExpenseDetailAPI(ExpenseBaseAPI):
+
+    def get(self, expense_id):
+        expense = self.service.get_expense_by_id(
+            expense_id
+        )
+
+        return ResponseBuilder.success(
+            message="Expense retrieved successfully",
+            data=self.serialize(expense),
+        )
+
+    def put(self, expense_id):
+        payload = ExpenseUpdateSchema.model_validate(
+            RequestParser.parse_json()
+        )
+
+        expense = self.service.update_expense(
+            expense_id,
+            payload,
+        )
+
+        return ResponseBuilder.success(
+            message="Expense updated successfully",
+            data=self.serialize(expense),
+        )
+
+    def delete(self, expense_id):
+        self.service.delete_expense(expense_id)
+
+        return ResponseBuilder.success(
+            message="Expense deleted successfully",
+        )
 
 
-@expense_bp.route("/expenses/<int:expense_id>", methods=["GET"])
-def get_expense(expense_id):
-    expense = get_expense_by_id(expense_id)
+class MonthlyExpenseSummaryAPI(ExpenseBaseAPI):
 
-    if expense is None:
-        return {
-            "success": False,
-            "message": "Expense not found"
-        }, 404
+    def get(self):
+        query_params = MonthlySummaryQuerySchema.model_validate(
+            request.args.to_dict()
+        )
 
-    return {
-        "success": True,
-        "data": serialize_expense(expense)
-    }, 200
+        summary = self.service.get_monthly_summary(
+            year=query_params.year,
+            month=query_params.month
+        )
 
-
-@expense_bp.route("/expenses", methods=["POST"])
-def post_expense():
-    data = request.get_json(silent=True)
-
-    validated_data, error = validate_expense_data(data)
-
-    if error:
-        return {"success": False, "error": error}, 400
-
-    expense = create_expense(validated_data)
-
-    return {
-        "success": True,
-        "message": "Expense created successfully",
-        "id": expense.id
-    }, 201
+        return ResponseBuilder.success(
+            message="Monthly expense summary retrieved successfully",
+            data=summary
+        )
 
 
-@expense_bp.route("/expenses/<int:expense_id>", methods=["PUT"])
-def put_expense(expense_id):
-    expense = get_expense_by_id(expense_id)
+expense_list_view = ExpenseListAPI.as_view(
+    "expense_list"
+)
 
-    if expense is None:
-        return {
-            "success": False,
-            "message": "Expense not found"
-        }, 404
+expense_detail_view = ExpenseDetailAPI.as_view(
+    "expense_detail"
+)
 
-    data = request.get_json(silent=True)
+expense_bp.add_url_rule(
+    "/expenses",
+    view_func=expense_list_view,
+    methods=["GET", "POST"],
+)
 
-    validated_data, error = validate_expense_data(data)
+expense_bp.add_url_rule(
+    "/expenses/<int:expense_id>",
+    view_func=expense_detail_view,
+    methods=["GET", "PUT", "DELETE"],
+)
 
-    if error:
-        return {"success": False, "error": error}, 400
-
-    updated_expense = update_expense(expense, validated_data)
-
-    return {
-        "success": True,
-        "message": "Expense updated successfully",
-        "id": updated_expense.id
-    }, 200
-
-
-@expense_bp.route("/expenses/<int:expense_id>", methods=["DELETE"])
-def remove_expense(expense_id):
-    expense = get_expense_by_id(expense_id)
-
-    if expense is None:
-        return {
-            "success": False,
-            "message": "Expense not found"
-        }, 404
-
-    delete_expense(expense)
-
-    return {
-        "success": True,
-        "message": "Expense deleted successfully",
-        "id": expense_id
-    }, 200
+expense_bp.add_url_rule(
+    "/expenses/summary/monthly",
+    view_func=MonthlyExpenseSummaryAPI.as_view(
+        "monthly_expense_summary"
+    )
+)

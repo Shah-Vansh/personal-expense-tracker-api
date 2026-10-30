@@ -1,9 +1,14 @@
-
 from app.extensions import db
-
 
 class Expense(db.Model):
     __tablename__ = "expenses"
+
+    __table_args__ = (
+        db.CheckConstraint(
+            "amount > 0",
+            name="expenses_amount_check"
+        ),
+    )
 
     id = db.Column(
         db.Integer,
