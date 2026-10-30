@@ -218,3 +218,29 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+
+
+*.pyc
+
+
+# Database backups
+*.dump
+*.backup
+
+# Temporary manual testing scripts
+test_*_manual.py
+
+# Python and pytest cache
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Environment and credentials
+.env
+.env.*
+!.env.example
+
+# Virtual environment
+venv/
+.venv/
